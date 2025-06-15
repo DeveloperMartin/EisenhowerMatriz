@@ -2,13 +2,13 @@
 
 import { DialogTrigger } from "@/components/ui/dialog"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, memo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -38,11 +38,16 @@ import {
   Zap,
   ExternalLinkIcon,
   CalendarDays,
+  Copy,
 } from "lucide-react"
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { Slider } from "@/components/ui/slider"
 
 import { useAuth } from "@/hooks/useAuth"
 import { databaseService, type DatabaseTask } from "@/lib/database"
 import { LoginForm } from "@/components/auth/login-form"
+
+type QuadrantType = "doNow" | "schedule" | "delegate" | "minimize" | "trash"
 
 interface Task {
   id: string
@@ -51,7 +56,9 @@ interface Task {
   project?: string
   assignedTo?: string
   completed?: boolean
+  duration_minutes?: number
   createdAt: Date
+  quadrant?: QuadrantType
 }
 
 interface Project {
@@ -247,6 +254,9 @@ const INITIAL_PROJECTS = [
 const DEFAULT_DELEGATION_CONTACTS = [
   { id: "chatgpt", name: "ChatGPT", type: "AI", url: "https://chat.openai.com" },
   { id: "claude", name: "Claude", type: "AI", url: "https://claude.ai" },
+  { id: "v0", name: "v0", type: "AI", url: "https://v0.dev/community" },
+  { id: "Jira", name: "Jira", type: "Jira", url: "https://antarestechnologies.atlassian.net/jira/software/c/projects/MHS/boards/564" },
+  { id: "Figma", name: "Figma", type: "Figma", url: "https://www.figma.com/files/team/1271555205494061869/recents-and-sharing?fuid=1271555203491090310" },
 ]
 
 // Hook personalizado para debouncing
@@ -359,6 +369,13 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
   const [syncLoading, setSyncLoading] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
 
+  const [isDurationDialogOpen, setIsDurationDialogOpen] = useState(false)
+  const [completingTask, setCompletingTask] = useState<{ id: string; quadrant: QuadrantType } | null>(null)
+  const [durationMinutes, setDurationMinutes] = useState<number>(0)
+
+  // Estado para mostrar/ocultar el menú de propina
+  const [showTipMenu, setShowTipMenu] = useState(false)
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("es-ES", {
       weekday: "long",
@@ -414,7 +431,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       const dbLinks = await databaseService.getCustomLinks(user.id)
 
       // Convertir tareas de la base de datos al formato local
-      const tasksByQuadrant = {
+      const tasksByQuadrant: Record<QuadrantType, Task[]> = {
         doNow: [],
         schedule: [],
         delegate: [],
@@ -429,9 +446,14 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
           description: dbTask.description,
           project: dbTask.project,
           completed: dbTask.completed,
+          duration_minutes: dbTask.duration_minutes,
           createdAt: new Date(dbTask.created_at),
+          quadrant: dbTask.quadrant as QuadrantType,
         }
-        tasksByQuadrant[dbTask.quadrant].push(task)
+        const quadrant = dbTask.quadrant as QuadrantType
+        if (tasksByQuadrant[quadrant]) {
+          tasksByQuadrant[quadrant].push(task)
+        }
       })
 
       // Convertir enlaces de la base de datos al formato local
@@ -486,16 +508,12 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     loadDayData(currentDate)
   }, [currentDate, user])
 
-  useEffect(() => {
-    localStorage.setItem(`eisenhower-${dayData.date}`, JSON.stringify(dayData))
-  }, [dayData])
-
   // Lógica de categorización automática
-  const determineQuadrant = (title: string, description: string, project: string): keyof typeof dayData.tasks => {
+  const determineQuadrant = (title: string, description: string, project: string): QuadrantType => {
     if (title && description && project) return "delegate"
-    if (title && description) return "doNow"
-    if (title && project) return "schedule" // Nueva regla: título + proyecto = planificación
-    if (title) return "minimize"
+    if (title && description) return "schedule" // Título + descripción = planificación
+    if (title && project) return "schedule" // Título + proyecto = planificación
+    if (title) return "doNow" // Solo título = hacer ahora
     return "minimize"
   }
 
@@ -505,12 +523,14 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     const quadrant = determineQuadrant(taskForm.title, taskForm.description, taskForm.project)
 
     const task: Task = {
-      id: Date.now().toString(), // Temporal, se reemplazará por el ID de la DB
+      id: Date.now().toString(),
       title: taskForm.title,
       description: taskForm.description,
       project: taskForm.project,
       completed: false,
+      duration_minutes: undefined,
       createdAt: new Date(),
+      quadrant,
     }
 
     try {
@@ -521,19 +541,24 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
         project: task.project,
         quadrant,
         completed: false,
+        duration_minutes: undefined,
         date: dayData.date,
       })
 
       // Actualizar el estado local con el ID real de la DB
       const taskWithDbId = { ...task, id: dbTask.id }
 
-      setDayData((prev) => ({
-        ...prev,
-        tasks: {
-          ...prev.tasks,
-          [quadrant]: [...prev.tasks[quadrant], taskWithDbId],
-        },
-      }))
+      setDayData((prev) => {
+        const newData = {
+          ...prev,
+          tasks: {
+            ...prev.tasks,
+            [quadrant]: [...prev.tasks[quadrant], taskWithDbId],
+          },
+        }
+        localStorage.setItem(`eisenhower-${dayData.date}`, JSON.stringify(newData))
+        return newData
+      })
 
       setTaskForm({ title: "", description: "", project: "" })
       setIsAddTaskDialogOpen(false)
@@ -626,7 +651,12 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
 
   const updateTaskInDb = async (taskId: string, updates: Partial<DatabaseTask>) => {
     try {
-      await databaseService.updateTask(taskId, updates)
+      console.log('Actualizando tarea:', { taskId, updates })
+      const result = await databaseService.updateTask(taskId, {
+        ...updates,
+        date: dayData.date // Asegurarnos de mantener la fecha
+      })
+      console.log('Tarea actualizada:', result)
       setLastSyncTime(new Date())
     } catch (error) {
       console.error("Error updating task:", error)
@@ -642,40 +672,98 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     }
   }
 
-  const completeTask = async (taskId: string, quadrant: keyof typeof dayData.tasks) => {
+  const completeTask = async (taskId: string, quadrant: QuadrantType) => {
     const task = dayData.tasks[quadrant].find((t) => t.id === taskId)
     if (!task) return
 
-    const newCompleted = !task.completed
+    if (!task.completed) {
+      // Mostrar SIEMPRE el diálogo de duración al completar, sin importar el cuadrante
+      setCompletingTask({ id: taskId, quadrant })
+      setIsDurationDialogOpen(true)
+      return
+    }
 
+    // Si la tarea ya está completada, simplemente desmarcarla
+    const newCompleted = false
     setDayData((prev) => ({
       ...prev,
       tasks: {
         ...prev.tasks,
         [quadrant]: prev.tasks[quadrant].map((task) =>
-          task.id === taskId ? { ...task, completed: newCompleted } : task,
+          task.id === taskId ? { ...task, completed: newCompleted, duration_minutes: undefined } : task,
         ),
       },
     }))
 
     // Sincronizar con la base de datos
-    await updateTaskInDb(taskId, { completed: newCompleted })
+    await updateTaskInDb(taskId, { 
+      completed: newCompleted, 
+      duration_minutes: undefined,
+      quadrant: quadrant,
+      date: dayData.date
+    })
   }
 
-  const deleteTask = async (taskId: string, quadrant: keyof typeof dayData.tasks) => {
+  const handleDurationSubmit = async () => {
+    if (!completingTask) return
+
+    const { id, quadrant } = completingTask
+    const task = dayData.tasks[quadrant].find((t) => t.id === id)
+    if (!task) return
+
+    const newCompleted = true
     setDayData((prev) => ({
       ...prev,
       tasks: {
         ...prev.tasks,
-        [quadrant]: prev.tasks[quadrant].filter((t) => t.id !== taskId),
+        [quadrant]: prev.tasks[quadrant].map((task) =>
+          task.id === id ? { ...task, completed: newCompleted, duration_minutes: durationMinutes } : task,
+        ),
       },
     }))
 
-    // Eliminar de la base de datos
-    await deleteTaskFromDb(taskId)
+    // Sincronizar con la base de datos
+    await updateTaskInDb(id, { completed: newCompleted, duration_minutes: durationMinutes })
+
+    // Resetear el estado
+    setDurationMinutes(0)
+    setCompletingTask(null)
+    setIsDurationDialogOpen(false)
   }
 
-  const moveTask = async (taskId: string, from: keyof typeof dayData.tasks, to: keyof typeof dayData.tasks) => {
+  const deleteTask = async (taskId: string, quadrant: QuadrantType) => {
+    const task = dayData.tasks[quadrant].find((t) => t.id === taskId)
+    if (!task) return
+
+    if (quadrant === "trash") {
+      // Si la tarea está en la basura, eliminarla permanentemente
+      setDayData((prev) => ({
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          trash: prev.tasks.trash.filter((t) => t.id !== taskId),
+        },
+      }))
+
+      // Eliminar de la base de datos
+      await deleteTaskFromDb(taskId)
+    } else {
+      // Si la tarea está en cualquier otro cuadrante, moverla a la basura
+      setDayData((prev) => ({
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          [quadrant]: prev.tasks[quadrant].filter((t) => t.id !== taskId),
+          trash: [...prev.tasks.trash, task],
+        },
+      }))
+
+      // Actualizar en la base de datos
+      await updateTaskInDb(taskId, { quadrant: "trash" })
+    }
+  }
+
+  const moveTask = async (taskId: string, from: QuadrantType, to: QuadrantType) => {
     const task = dayData.tasks[from].find((t) => t.id === taskId)
     if (!task) return
 
@@ -721,7 +809,9 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       description: editTaskForm.description,
       project: editTaskForm.project,
       completed: false,
+      duration_minutes: undefined,
       createdAt: new Date(),
+      quadrant,
     }
 
     setDayData((prev) => {
@@ -734,8 +824,8 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       if (!keepOriginalTask) {
         // Encontrar en qué cuadrante está la tarea original
         const originalQuadrant = Object.keys(updatedTasks).find((key) =>
-          updatedTasks[key as keyof typeof updatedTasks].some((t) => t.id === editingTask.id),
-        ) as keyof typeof updatedTasks
+          updatedTasks[key as QuadrantType].some((t) => t.id === editingTask.id),
+        ) as QuadrantType
 
         if (originalQuadrant) {
           updatedTasks[originalQuadrant] = updatedTasks[originalQuadrant].filter((t) => t.id !== editingTask.id)
@@ -743,10 +833,12 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
         }
       }
 
-      return {
+      const newData = {
         ...prev,
         tasks: updatedTasks,
       }
+      localStorage.setItem(`eisenhower-${dayData.date}`, JSON.stringify(newData))
+      return newData
     })
 
     setEditTaskForm({ title: "", description: "", project: "" })
@@ -760,33 +852,44 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     setIsAssignProjectDialogOpen(true)
   }
 
-  const assignProject = () => {
-    if (!assignProjectForm.project.trim() || !assigningTask) return
+  const assignProject = async () => {
+    if (!assigningTask || !assignProjectForm.project) return
 
-    const updatedTask = {
-      ...assigningTask,
-      project: assignProjectForm.project,
-    }
+    const quadrant = assigningTask.quadrant as QuadrantType
+    const task = dayData.tasks[quadrant].find((t: Task) => t.id === assigningTask.id)
+    if (!task) return
 
-    // Determinar el cuadrante destino basado en la lógica de categorización
-    const targetQuadrant = determineQuadrant(updatedTask.title, updatedTask.description || "", updatedTask.project)
-
-    setDayData((prev) => {
-      const updatedTasks = { ...prev.tasks }
-
-      // Marcar la tarea original como completada en "doNow"
-      updatedTasks.doNow = updatedTasks.doNow.map((task) =>
-        task.id === assigningTask.id ? { ...task, completed: true } : task,
-      )
-
-      // Agregar la tarea actualizada al cuadrante correspondiente
-      updatedTasks[targetQuadrant] = [...updatedTasks[targetQuadrant], updatedTask]
-
-      return {
+    // Si la tarea está en doNow y se le asigna un proyecto, moverla a schedule
+    if (quadrant === "doNow") {
+      setDayData((prev) => ({
         ...prev,
-        tasks: updatedTasks,
-      }
-    })
+        tasks: {
+          ...prev.tasks,
+          doNow: prev.tasks.doNow.filter((t: Task) => t.id !== assigningTask.id),
+          schedule: [...prev.tasks.schedule, { ...task, project: assignProjectForm.project }],
+        },
+      }))
+
+      // Actualizar en la base de datos
+      await updateTaskInDb(assigningTask.id, { 
+        project: assignProjectForm.project,
+        quadrant: "schedule"
+      })
+    } else {
+      // Para otros cuadrantes, solo actualizar el proyecto
+      setDayData((prev) => ({
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          [quadrant]: prev.tasks[quadrant].map((t: Task) =>
+            t.id === assigningTask.id ? { ...t, project: assignProjectForm.project } : t,
+          ),
+        },
+      }))
+
+      // Actualizar en la base de datos
+      await updateTaskInDb(assigningTask.id, { project: assignProjectForm.project })
+    }
 
     setAssignProjectForm({ project: "" })
     setAssigningTask(null)
@@ -901,15 +1004,17 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       description: description || undefined,
       project: project || undefined,
       completed: false,
+      duration_minutes: undefined,
       createdAt: new Date(),
+      quadrant: recommendation.quadrant as QuadrantType,
     }
 
     setDayData((prev) => ({
       ...prev,
       tasks: {
         ...prev.tasks,
-        [recommendation.quadrant as keyof typeof prev.tasks]: [
-          ...prev.tasks[recommendation.quadrant as keyof typeof prev.tasks],
+        [recommendation.quadrant as QuadrantType]: [
+          ...prev.tasks[recommendation.quadrant as QuadrantType],
           task,
         ],
       },
@@ -947,133 +1052,162 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     return days
   }
 
-  const TaskItem = ({
-    task,
-    quadrant,
-    compact = false,
-  }: { task: Task; quadrant: keyof typeof dayData.tasks; compact?: boolean }) => (
-    <div
-      className={`flex items-center gap-2 p-2 rounded border ${task.completed ? "bg-gray-50 opacity-60" : "bg-white"} ${compact ? "text-sm" : ""} mb-1 transition-all duration-200 hover:shadow-sm`}
-    >
-      <div className="flex-1 min-w-0">
-        <span className={`block truncate ${task.completed ? "line-through text-gray-500" : "text-gray-900"}`}>
-          {quadrant === "doNow" && task.completed ? `✓ ${task.title} terminada` : task.title}
-          {quadrant === "schedule" && task.completed ? ` (Planificada)` : ""}
-          {quadrant === "delegate" && task.completed ? ` (Delegada)` : ""}
-        </span>
-        {task.description && <p className="text-xs text-gray-600 mt-0.5 truncate">{task.description}</p>}
-        {task.project && (
-          <Badge variant="outline" className="mt-1 text-xs text-gray-600 border-gray-300 h-4 px-1">
-            {projects.find((p) => p.id === task.project)?.name}
-          </Badge>
-        )}
-      </div>
-      <div className="flex gap-0.5 flex-shrink-0">
-        {quadrant === "doNow" && !task.completed && (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => openAssignProjectDialog(task)}
-              title="Asignar a proyecto"
-              className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
-            >
-              <Calendar className="h-3 w-3" />
-            </Button>
+  const TaskItemComponent = ({ task, quadrant, compact = false }: { task: Task; quadrant: QuadrantType; compact?: boolean }) => {
+    const [showCopyTooltip, setShowCopyTooltip] = useState(false);
+
+    const copyToClipboard = () => {
+      const projectName = task.project ? projects.find((p) => p.id === task.project)?.name : "";
+      const textToCopy = [
+        `Título: ${task.title}`,
+        task.description ? `Descripción: ${task.description}` : "",
+        projectName ? `Proyecto: ${projectName}` : "",
+      ].filter(Boolean).join("\n");
+      
+      navigator.clipboard.writeText(textToCopy);
+      setShowCopyTooltip(true);
+      setTimeout(() => setShowCopyTooltip(false), 2000);
+    };
+
+    return (
+      <div
+        className={`flex items-center gap-2 p-2 rounded border ${task.completed ? "bg-gray-50 opacity-60" : "bg-white"} ${compact ? "text-sm" : ""} mb-1 transition-all duration-200 hover:shadow-sm`}
+      >
+        <div className="flex-1 min-w-0">
+          <span className={`block truncate ${task.completed ? "line-through text-gray-500" : "text-gray-900"}`}>
+            {quadrant === "doNow" && task.completed ? `✓ ${task.title} terminada` : task.title}
+            {quadrant === "schedule" && task.completed ? ` (Planificada)` : ""}
+            {quadrant === "delegate" && task.completed ? ` (Delegada)` : ""}
+          </span>
+          {task.description && <p className="text-xs text-gray-600 mt-0.5 truncate">{task.description}</p>}
+          {task.project && (
+            <Badge variant="outline" className="mt-1 text-xs text-gray-600 border-gray-300 h-4 px-1">
+              {projects.find((p) => p.id === task.project)?.name}
+            </Badge>
+          )}
+        </div>
+        <div className="flex gap-0.5 flex-shrink-0">
+          <TooltipProvider>
+            <Tooltip open={showCopyTooltip}>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={copyToClipboard}
+                  className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+                  title="Copiar detalles"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">¡Copiado al portapapeles!</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          {quadrant === "doNow" && !task.completed && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => openAssignProjectDialog(task)}
+                title="Asignar a proyecto"
+                className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+              >
+                <Calendar className="h-3 w-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => completeTask(task.id, quadrant)}
+                className="h-6 w-6 p-0 text-gray-500 hover:text-green-600"
+              >
+                <CheckCircle className="h-3 w-3" />
+              </Button>
+            </>
+          )}
+          {quadrant === "doNow" && task.completed && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => completeTask(task.id, quadrant)}
-              className="h-6 w-6 p-0 text-gray-500 hover:text-green-600"
+              className="h-6 w-6 p-0 text-green-600"
             >
               <CheckCircle className="h-3 w-3" />
             </Button>
-          </>
-        )}
-        {quadrant === "doNow" && task.completed && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => completeTask(task.id, quadrant)}
-            className="h-6 w-6 p-0 text-green-600"
-          >
-            <CheckCircle className="h-3 w-3" />
-          </Button>
-        )}
-        {quadrant === "delegate" && !task.completed && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => markAsDelegated(task.id)}
-            title="Marcar como delegada"
-            className="h-6 w-6 p-0 text-gray-500 hover:text-amber-600"
-          >
-            <CheckCircle className="h-3 w-3" />
-          </Button>
-        )}
-        {quadrant === "minimize" && (
-          <>
+          )}
+          {quadrant === "delegate" && !task.completed && (
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => moveTask(task.id, quadrant, "trash")}
-              className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+              onClick={() => completeTask(task.id, quadrant)}
+              title="Marcar como delegada"
+              className="h-6 w-6 p-0 text-gray-500 hover:text-amber-600"
             >
-              <ArrowRight className="h-3 w-3" />
+              <CheckCircle className="h-3 w-3" />
             </Button>
+          )}
+          {quadrant === "minimize" && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => moveTask(task.id, quadrant, "trash")}
+                className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+              >
+                <ArrowRight className="h-3 w-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => openEditTaskDialog(task)}
+                className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            </>
+          )}
+          {quadrant === "trash" && (
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => openEditTaskDialog(task)}
+              onClick={() => moveTask(task.id, quadrant, "minimize")}
               className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
             >
-              <Plus className="h-3 w-3" />
+              <ArrowLeft className="h-3 w-3" />
             </Button>
-          </>
-        )}
-        {quadrant === "trash" && (
+          )}
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => moveTask(task.id, quadrant, "minimize")}
-            className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
+            onClick={() => deleteTask(task.id, quadrant)}
+            className="h-6 w-6 p-0 text-gray-500 hover:text-red-600"
           >
-            <ArrowLeft className="h-3 w-3" />
+            <Trash2 className="h-3 w-3" />
           </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => deleteTask(task.id, quadrant)}
-          className="h-6 w-6 p-0 text-gray-500 hover:text-red-600"
-        >
-          <Trash2 className="h-3 w-3" />
-        </Button>
-        {quadrant === "schedule" && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => completeTask(task.id, quadrant)}
-            className={`h-6 w-6 p-0 ${task.completed ? "text-green-600" : "text-gray-500 hover:text-green-600"}`}
-          >
-            <CheckCircle className="h-3 w-3" />
-          </Button>
-        )}
+          {quadrant === "schedule" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => completeTask(task.id, quadrant)}
+              className={`h-6 w-6 p-0 ${task.completed ? "text-green-600" : "text-gray-500 hover:text-green-600"}`}
+            >
+              <CheckCircle className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
+  const TaskItem = memo(TaskItemComponent);
+  TaskItem.displayName = "TaskItem";
 
-  const TaskSection = ({
-    tasks,
-    quadrant,
-    sectionKey,
-  }: {
-    tasks: Task[]
-    quadrant: keyof typeof dayData.tasks
-    sectionKey: string
-  }) => {
+  const TaskSectionComponent = ({ tasks, quadrant, sectionKey }: { tasks: Task[]; quadrant: QuadrantType; sectionKey: string }) => {
     const isExpanded = expandedSections[sectionKey]
-    const visibleTasks = isExpanded ? tasks : tasks.slice(0, 3)
+    // Ordenar: primero no completadas (más nuevas primero), luego completadas (más nuevas primero)
+    const sortedTasks = [...tasks]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .sort((a, b) => Number(a.completed) - Number(b.completed))
+    const visibleTasks = isExpanded ? sortedTasks : sortedTasks.slice(0, 3)
     const hasMore = tasks.length > 3
 
     return (
@@ -1104,6 +1238,8 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       </div>
     )
   }
+  const TaskSection = memo(TaskSectionComponent);
+  TaskSection.displayName = "TaskSection";
 
   // Componente optimizado para selector de contactos
   const WhatsAppContactSelector = () => {
@@ -1676,8 +1812,6 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
             {isDatePickerOpen && <div className="fixed inset-0 z-40" onClick={() => setIsDatePickerOpen(false)} />}
           </div>
 
-          <p className="text-gray-600 text-sm">Tu matriz de productividad personal</p>
-
           {/* Botones para agregar tarea */}
           <div className="flex gap-2 justify-center mt-3">
             <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
@@ -1700,7 +1834,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
                       placeholder="Enviarle una foto a mama"
                       className="h-8 text-sm"
                     />
-                    <p className="text-xs text-gray-500 mt-0.5">Solo título → Minimizar</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Solo título → Hacer Ahora</p>
                   </div>
                   <div>
                     <label className="text-xs font-medium">Descripción</label>
@@ -1710,7 +1844,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
                       placeholder="Mira mama, estoy usando la freidora de aire que me regalaste"
                       className="h-16 text-sm resize-none"
                     />
-                    <p className="text-xs text-gray-500 mt-0.5">Título + Descripción → Hacer Ahora</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Título + Descripción → Planificación</p>
                   </div>
                   <div>
                     <label className="text-xs font-medium">Proyecto</label>
@@ -1751,7 +1885,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
               className="border-gray-300 text-gray-700 h-8 px-3 text-sm"
             >
               <HelpCircle className="h-3 w-3 mr-1" />
-              Asistente
+              FAQ
             </Button>
           </div>
 
@@ -2244,6 +2378,42 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* Diálogo de duración */}
+          <Dialog open={isDurationDialogOpen} onOpenChange={setIsDurationDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader className="pb-3">
+                <DialogTitle className="text-base">¿Cuánto tiempo tomó?</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Registra el tiempo que te tomó completar esta tarea
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Duración en minutos</label>
+                  <div className="flex items-center gap-4">
+                    <Slider
+                      value={[durationMinutes]}
+                      onValueChange={(value) => setDurationMinutes(value[0])}
+                      max={480}
+                      step={5}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-medium min-w-[60px]">{durationMinutes} min</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button onClick={handleDurationSubmit} className="flex-1 bg-gray-900 hover:bg-gray-800 h-8 text-sm">
+                    Guardar
+                  </Button>
+                  <Button variant="outline" onClick={() => setIsDurationDialogOpen(false)} className="h-8 text-sm">
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Matriz con animaciones */}
@@ -2263,7 +2433,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
             </CardHeader>
             <CardContent className="p-3">
               {dayData.tasks.doNow.length === 0 ? (
-                <p className="text-center text-gray-500 py-3 text-sm">¡Perfecto! No hay urgencias por ahora</p>
+                <p className="text-center text-gray-500 py-3 text-sm">¿No hiciste nada?, bueno entonces acordate de mi instagram: <a href="https://www.instagram.com/martinsktordie" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">@martinsktordie</a></p>
               ) : (
                 <TaskSection tasks={dayData.tasks.doNow} quadrant="doNow" sectionKey="doNow" />
               )}
@@ -2584,6 +2754,54 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
           <ChevronRight className="h-6 w-6" />
           <span className="text-xs">Mañana</span>
         </Button>
+      </div>
+
+      {/* Botón de propina en la esquina superior izquierda */}
+      <div className="fixed top-2 left-2 z-50">
+        <button
+          onClick={() => setShowTipMenu((prev) => !prev)}
+          className="p-0 m-0 bg-transparent border-none shadow-none focus:outline-none text-base opacity-30 hover:opacity-100 transition-opacity duration-200"
+          title="¿Te gusta la app?"
+          style={{ lineHeight: 1 }}
+        >
+          <span role="img" aria-label="Café" className="text-base">☕️</span>
+        </button>
+        {showTipMenu && (
+          <div className="mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-sm animate-fade-in z-50">
+            <div className="mb-2 text-gray-800 font-semibold flex items-center gap-2">
+              <span role="img" aria-label="Gracias">🙏</span>
+              ¿Te gusta la app?
+            </div>
+            <div className="mb-2 text-gray-600">Puedes invitarme un cafecito o ayudarme a cumplir mi sueño:</div>
+            <ul className="space-y-2">
+              <li>
+                <a
+                  href="https://cafecito.app/ejemplo" // Cambia este link por el tuyo
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-blue-600 hover:underline"
+                >
+                  <span role="img" aria-label="Café">☕️</span>
+                  Invitar un cafecito
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://www.lamborghini.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-yellow-600 hover:underline"
+                >
+                  <span role="img" aria-label="Lamborghini">🏎️</span>
+                  Cumplir mi sueño: regalarle a mi mamá un Lamborghini Gallardo amarillo
+                </a>
+              </li>
+            </ul>
+            <div className="mt-3 text-xs text-gray-400">
+              Es que se lo jure cuando tenia cinco completamente euforico al ver el pedazo de auto ese
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

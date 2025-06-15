@@ -8,6 +8,7 @@ export interface DatabaseTask {
   project?: string
   quadrant: "doNow" | "schedule" | "delegate" | "minimize" | "trash"
   completed: boolean
+  duration_minutes?: number
   date: string
   created_at: string
   updated_at: string

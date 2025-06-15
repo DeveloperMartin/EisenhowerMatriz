@@ -7,10 +7,24 @@ CREATE TABLE IF NOT EXISTS tasks (
   project TEXT,
   quadrant TEXT NOT NULL CHECK (quadrant IN ('doNow', 'schedule', 'delegate', 'minimize', 'trash')),
   completed BOOLEAN DEFAULT FALSE,
+  duration_minutes INTEGER,
   date DATE NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Agregar columna duration_minutes si no existe
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'tasks' 
+        AND column_name = 'duration_minutes'
+    ) THEN
+        ALTER TABLE tasks ADD COLUMN duration_minutes INTEGER;
+    END IF;
+END $$;
 
 -- Crear tabla de enlaces personalizados
 CREATE TABLE IF NOT EXISTS custom_links (

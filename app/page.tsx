@@ -511,9 +511,9 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
   // Lógica de categorización automática
   const determineQuadrant = (title: string, description: string, project: string): QuadrantType => {
     if (title && description && project) return "delegate"
-    if (title && description) return "schedule" // Título + descripción = planificación
-    if (title && project) return "schedule" // Título + proyecto = planificación
-    if (title) return "doNow" // Solo título = hacer ahora
+    if (title && description) return "schedule"
+    if (title && project) return "schedule"
+    if (title) return "minimize" // Solo título = backlog
     return "minimize"
   }
 
@@ -801,7 +801,16 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
   const saveEditedTask = () => {
     if (!editTaskForm.title.trim() || !editingTask) return
 
-    const quadrant = determineQuadrant(editTaskForm.title, editTaskForm.description, editTaskForm.project)
+    // Detectar si la tarea original viene de minimizar y solo tiene título
+    let quadrant = determineQuadrant(editTaskForm.title, editTaskForm.description, editTaskForm.project)
+    if (
+      editingTask.quadrant === "minimize" &&
+      editTaskForm.title &&
+      !editTaskForm.description &&
+      !editTaskForm.project
+    ) {
+      quadrant = "doNow"
+    }
 
     const newTask: Task = {
       id: Date.now().toString(),
@@ -1151,7 +1160,15 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => moveTask(task.id, quadrant, "trash")}
+                onClick={() => {
+                  if (!task.description && !task.project) {
+                    // Solo título: mover a Hacer Ahora
+                    moveTask(task.id, quadrant, "doNow")
+                  } else {
+                    // Si tiene descripción o proyecto, mover a la basura
+                    moveTask(task.id, quadrant, "trash")
+                  }
+                }}
                 className="h-6 w-6 p-0 text-gray-500 hover:text-gray-700"
               >
                 <ArrowRight className="h-3 w-3" />
@@ -2418,6 +2435,47 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
 
         {/* Matriz con animaciones */}
         <div className={`space-y-4 transition-opacity duration-200 ${isTransitioning ? "opacity-50" : "opacity-100"}`}>
+          {/* Minimizar */}
+          <Card className="border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow mb-4">
+            <CardHeader className="bg-gray-50 border-b border-gray-100 py-2">
+              <CardTitle className="flex items-center gap-2 text-gray-900">
+                <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center">
+                  <Archive className="h-3 w-3 text-gray-600" />
+                </div>
+                <div>
+                  <div className="text-base font-semibold">Minimizar & Backlog</div>
+                  <div className="text-xs font-normal text-gray-600">No Importante + No Urgente</div>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3">
+              <Tabs defaultValue="minimize" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 bg-gray-100 h-7">
+                  <TabsTrigger value="minimize" className="data-[state=active]:bg-white text-xs">
+                    Backlog ({dayData.tasks.minimize.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="trash" className="data-[state=active]:bg-white text-xs">
+                    Basura ({dayData.tasks.trash.length})
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="minimize" className="mt-2">
+                  {dayData.tasks.minimize.length === 0 ? (
+                    <p className="text-center text-gray-500 py-3 text-sm">Backlog vacío - ¡Excelente enfoque!</p>
+                  ) : (
+                    <TaskSection tasks={dayData.tasks.minimize} quadrant="minimize" sectionKey="minimize" />
+                  )}
+                </TabsContent>
+                <TabsContent value="trash" className="mt-2">
+                  {dayData.tasks.trash.length === 0 ? (
+                    <p className="text-center text-gray-500 py-3 text-sm">Basura vacía</p>
+                  ) : (
+                    <TaskSection tasks={dayData.tasks.trash} quadrant="trash" sectionKey="trash" />
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
           {/* Hacer Ahora */}
           <Card className="border-red-200 bg-white shadow-sm hover:shadow-md transition-shadow">
             <CardHeader className="bg-red-50 border-b border-red-100 py-2">
@@ -2695,47 +2753,6 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
               </CardContent>
             </Card>
           </div>
-
-          {/* Minimizar */}
-          <Card className="border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow">
-            <CardHeader className="bg-gray-50 border-b border-gray-100 py-2">
-              <CardTitle className="flex items-center gap-2 text-gray-900">
-                <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center">
-                  <Archive className="h-3 w-3 text-gray-600" />
-                </div>
-                <div>
-                  <div className="text-base font-semibold">Minimizar & Backlog</div>
-                  <div className="text-xs font-normal text-gray-600">No Importante + No Urgente</div>
-                </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-3">
-              <Tabs defaultValue="minimize" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 bg-gray-100 h-7">
-                  <TabsTrigger value="minimize" className="data-[state=active]:bg-white text-xs">
-                    Backlog ({dayData.tasks.minimize.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="trash" className="data-[state=active]:bg-white text-xs">
-                    Basura ({dayData.tasks.trash.length})
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="minimize" className="mt-2">
-                  {dayData.tasks.minimize.length === 0 ? (
-                    <p className="text-center text-gray-500 py-3 text-sm">Backlog vacío - ¡Excelente enfoque!</p>
-                  ) : (
-                    <TaskSection tasks={dayData.tasks.minimize} quadrant="minimize" sectionKey="minimize" />
-                  )}
-                </TabsContent>
-                <TabsContent value="trash" className="mt-2">
-                  {dayData.tasks.trash.length === 0 ? (
-                    <p className="text-center text-gray-500 py-3 text-sm">Basura vacía</p>
-                  ) : (
-                    <TaskSection tasks={dayData.tasks.trash} quadrant="trash" sectionKey="trash" />
-                  )}
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
         </div>
 
         {/* App Launcher */}

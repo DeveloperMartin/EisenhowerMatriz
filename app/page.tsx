@@ -48,6 +48,7 @@ import {
   Play,
   X,
   Settings,
+  Book,
 } from "lucide-react"
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
@@ -1578,6 +1579,15 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
         hoverColor: "hover:bg-gray-800",
         url: "#",
         current: true,
+      },
+      {
+        id: "blog-minimalista",
+        name: "Agenda publica",
+        description: "Agenda personal",
+        icon: Book,
+        color: "bg-blue-700",
+        hoverColor: "hover:bg-blue-800",
+        url: "https://v0.dev/chat/minimalist-blog-design-Bx2kz86PHeY",
       },
     ]
 

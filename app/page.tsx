@@ -1079,7 +1079,13 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
 
     return (
       <div
-        className={`flex items-center gap-2 p-2 rounded border ${task.completed ? "bg-gray-50 opacity-60" : "bg-white"} ${compact ? "text-sm" : ""} mb-1 transition-all duration-200 hover:shadow-sm`}
+        className={[
+          "flex items-center gap-2 p-2 rounded border",
+          task.completed ? "bg-gray-50 opacity-60" : "bg-white",
+          compact ? "text-sm" : "",
+          "mb-1 transition-all duration-200 hover:shadow-sm",
+          quadrant === "delegate" && !task.completed ? "bg-[rgba(162,89,255,0.08)] border-l-4 border-violet-400" : ""
+        ].filter(Boolean).join(" ")}
       >
         <div className="flex-1 min-w-0">
           <span className={`block truncate ${task.completed ? "line-through text-gray-500" : "text-gray-900"}`}>

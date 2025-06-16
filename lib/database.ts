@@ -25,6 +25,14 @@ export interface DatabaseCustomLink {
   created_at: string
 }
 
+export interface TaskStats {
+  tasksPerMinute: number
+  completedTasksLast30Days: number
+  trend: "up" | "down" | "stable"
+  averageTasksPerDay: number
+  totalMinutesSpent: number
+}
+
 export const databaseService = {
   // Tareas
   async getTasks(userId: string, date: string): Promise<DatabaseTask[]> {
@@ -37,6 +45,68 @@ export const databaseService = {
 
     if (error) throw error
     return data || []
+  },
+
+  async getTaskStats(userId: string): Promise<TaskStats> {
+    // Obtener fecha de hace 30 días
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0]
+
+    // Obtener fecha de hace 60 días para comparar tendencias
+    const sixtyDaysAgo = new Date()
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
+    const sixtyDaysAgoStr = sixtyDaysAgo.toISOString().split('T')[0]
+
+    // Obtener tareas completadas en los últimos 30 días
+    const { data: recentTasks, error: recentError } = await supabase
+      .from("tasks")
+      .select("completed, duration_minutes, date")
+      .eq("user_id", userId)
+      .gte("date", thirtyDaysAgoStr)
+      .eq("completed", true)
+
+    if (recentError) throw recentError
+
+    // Obtener tareas completadas en los 30 días anteriores (para comparar tendencias)
+    const { data: previousTasks, error: previousError } = await supabase
+      .from("tasks")
+      .select("completed, duration_minutes, date")
+      .eq("user_id", userId)
+      .gte("date", sixtyDaysAgoStr)
+      .lt("date", thirtyDaysAgoStr)
+      .eq("completed", true)
+
+    if (previousError) throw previousError
+
+    // Calcular estadísticas
+    const completedTasksLast30Days = recentTasks?.length || 0
+    const completedTasksPrevious30Days = previousTasks?.length || 0
+    
+    // Calcular tiempo total gastado
+    const totalMinutesSpent = recentTasks?.reduce((sum, task) => sum + (task.duration_minutes || 0), 0) || 0
+    
+    // Calcular promedio de tareas por día
+    const averageTasksPerDay = completedTasksLast30Days / 30
+    
+    // Calcular tareas por minuto (basado en el tiempo total gastado)
+    const tasksPerMinute = totalMinutesSpent > 0 ? completedTasksLast30Days / totalMinutesSpent : 0
+    
+    // Determinar tendencia
+    let trend: "up" | "down" | "stable" = "stable"
+    if (completedTasksLast30Days > completedTasksPrevious30Days) {
+      trend = "up"
+    } else if (completedTasksLast30Days < completedTasksPrevious30Days) {
+      trend = "down"
+    }
+
+    return {
+      tasksPerMinute,
+      completedTasksLast30Days,
+      trend,
+      averageTasksPerDay,
+      totalMinutesSpent
+    }
   },
 
   async createTask(userId: string, task: Omit<DatabaseTask, "id" | "user_id" | "created_at" | "updated_at">) {

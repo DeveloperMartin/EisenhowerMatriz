@@ -39,12 +39,16 @@ import {
   ExternalLinkIcon,
   CalendarDays,
   Copy,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  BarChart3,
 } from "lucide-react"
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 
 import { useAuth } from "@/hooks/useAuth"
-import { databaseService, type DatabaseTask } from "@/lib/database"
+import { databaseService, type DatabaseTask, type TaskStats } from "@/lib/database"
 import { LoginForm } from "@/components/auth/login-form"
 
 type QuadrantType = "doNow" | "schedule" | "delegate" | "minimize" | "trash"
@@ -376,6 +380,10 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
   // Estado para mostrar/ocultar el menú de propina
   const [showTipMenu, setShowTipMenu] = useState(false)
 
+  // Estado para las estadísticas
+  const [taskStats, setTaskStats] = useState<TaskStats | null>(null)
+  const [statsLoading, setStatsLoading] = useState(false)
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("es-ES", {
       weekday: "long",
@@ -498,6 +506,18 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     }
   }
 
+  const loadTaskStats = async () => {
+    setStatsLoading(true)
+    try {
+      const stats = await databaseService.getTaskStats(user.id)
+      setTaskStats(stats)
+    } catch (error) {
+      console.error("Error loading task stats:", error)
+    } finally {
+      setStatsLoading(false)
+    }
+  }
+
   useEffect(() => {
     const initialProjects = INITIAL_PROJECTS.map((name) => ({
       id: name.toLowerCase().replace(/\s+/g, "-"),
@@ -506,6 +526,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     }))
     setProjects(initialProjects)
     loadDayData(currentDate)
+    loadTaskStats()
   }, [currentDate, user])
 
   // Lógica de categorización automática
@@ -563,6 +584,9 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       setTaskForm({ title: "", description: "", project: "" })
       setIsAddTaskDialogOpen(false)
       setLastSyncTime(new Date())
+      
+      // Actualizar estadísticas
+      await loadTaskStats()
     } catch (error) {
       console.error("Error creating task:", error)
       alert("Error al crear la tarea. Inténtalo de nuevo.")
@@ -702,6 +726,9 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
       quadrant: quadrant,
       date: dayData.date
     })
+
+    // Actualizar estadísticas
+    await loadTaskStats()
   }
 
   const handleDurationSubmit = async () => {
@@ -724,6 +751,9 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
 
     // Sincronizar con la base de datos
     await updateTaskInDb(id, { completed: newCompleted, duration_minutes: durationMinutes })
+
+    // Actualizar estadísticas
+    await loadTaskStats()
 
     // Resetear el estado
     setDurationMinutes(0)
@@ -1653,8 +1683,188 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     )
   }
 
+  // Componente de Estadísticas
+  const StatsPanel = () => {
+    const [isHovered, setIsHovered] = useState(false)
+    
+    const getTrendIcon = () => {
+      if (!taskStats) return <Minus className="h-3 w-3 text-gray-400" />
+      
+      switch (taskStats.trend) {
+        case "up":
+          return <TrendingUp className="h-3 w-3 text-green-500" />
+        case "down":
+          return <TrendingDown className="h-3 w-3 text-red-500" />
+        default:
+          return <Minus className="h-3 w-3 text-gray-400" />
+      }
+    }
+
+    const getTrendText = () => {
+      if (!taskStats) return "Sin datos"
+      
+      switch (taskStats.trend) {
+        case "up":
+          return "En alza"
+        case "down":
+          return "En baja"
+        default:
+          return "Estable"
+      }
+    }
+
+    const getTrendColor = () => {
+      if (!taskStats) return "text-gray-400"
+      
+      switch (taskStats.trend) {
+        case "up":
+          return "text-green-600"
+        case "down":
+          return "text-red-600"
+        default:
+          return "text-gray-600"
+      }
+    }
+
+    return (
+      <div 
+        className="fixed bottom-0 left-1/2 transform -translate-x-1/2 z-50"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className={`bg-white rounded-t-lg shadow-lg border border-gray-200 transition-all duration-300 ease-in-out ${
+                isHovered ? 'h-auto pb-3' : 'h-8'
+              }`}>
+                {/* Barra visible cuando está oculto */}
+                <div className={`flex items-center justify-center gap-2 px-4 py-1.5 cursor-pointer transition-colors duration-200 ${
+                  isHovered ? 'bg-gray-50' : 'hover:bg-gray-50'
+                }`}>
+                  <BarChart3 className="h-4 w-4 text-gray-600" />
+                  <span className="text-xs font-medium text-gray-700">Productividad</span>
+                  {statsLoading && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                  <div className="flex items-center gap-1">
+                    {getTrendIcon()}
+                    <span className={`text-xs font-medium ${getTrendColor()}`}>
+                      {taskStats ? taskStats.completedTasksLast30Days : 0} tareas
+                    </span>
+                  </div>
+                  <ChevronUp className={`h-3 w-3 text-gray-400 transition-transform duration-300 ${isHovered ? 'rotate-180' : ''}`} />
+                </div>
+                
+                {/* Contenido completo que se muestra en hover */}
+                <div className={`px-4 transition-all duration-300 ${isHovered ? 'opacity-100 max-h-96' : 'opacity-0 max-h-0 overflow-hidden'}`}>
+                  <div className="space-y-2 pt-2">
+                    {/* Tareas por minuto */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Tareas/min:</span>
+                      <span className="text-xs font-medium text-gray-900">
+                        {taskStats ? taskStats.tasksPerMinute.toFixed(3) : "0.000"}
+                      </span>
+                    </div>
+                    
+                    {/* Tareas completadas en 30 días */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Últimos 30 días:</span>
+                      <span className="text-xs font-medium text-gray-900">
+                        {taskStats ? taskStats.completedTasksLast30Days : 0}
+                      </span>
+                    </div>
+                    
+                    {/* Promedio por día */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Promedio/día:</span>
+                      <span className="text-xs font-medium text-gray-900">
+                        {taskStats ? taskStats.averageTasksPerDay.toFixed(1) : "0.0"}
+                      </span>
+                    </div>
+                    
+                    {/* Tendencia */}
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+                      <span className="text-xs text-gray-600">Tendencia:</span>
+                      <div className="flex items-center gap-1">
+                        {getTrendIcon()}
+                        <span className={`text-xs font-medium ${getTrendColor()}`}>
+                          {getTrendText()}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Tiempo total gastado */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Tiempo total:</span>
+                      <span className="text-xs font-medium text-gray-900">
+                        {taskStats ? `${Math.round(taskStats.totalMinutesSpent / 60)}h ${taskStats.totalMinutesSpent % 60}m` : "0h 0m"}
+                      </span>
+                    </div>
+                    
+                    {/* Botón de cafecito sutil */}
+                    <div className="pt-2 border-t border-gray-100">
+                      <button
+                        onClick={() => setShowTipMenu((prev) => !prev)}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-colors duration-200"
+                        title="¿Te gusta la app?"
+                      >
+                        <span role="img" aria-label="Café" className="text-xs opacity-60">☕️</span>
+                        <span className="text-xs">Pagale un café a Mencho</span>
+                      </button>
+                      {showTipMenu && (
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs z-50">
+                          <div className="mb-2 text-gray-800 font-medium flex items-center gap-2">
+                            <span role="img" aria-label="Gracias">🙏</span>
+                            ¿Te gusta la app?
+                          </div>
+                          <div className="mb-2 text-gray-600">Puedes invitarme un cafecito o ayudarme a cumplir mi sueño:</div>
+                          <ul className="space-y-1.5">
+                            <li>
+                              <a
+                                href="https://cafecito.app/ejemplo" // Cambia este link por el tuyo
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-blue-600 hover:underline"
+                              >
+                                <span role="img" aria-label="Café">☕️</span>
+                                Invitar un cafecito
+                              </a>
+                            </li>
+                            <li>
+                              <a
+                                href="https://www.lamborghini.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-yellow-600 hover:underline"
+                              >
+                                <span role="img" aria-label="Lamborghini">🏎️</span>
+                                Cumplir mi sueño: regalarle a mi mamá un Lamborghini Gallardo amarillo
+                              </a>
+                            </li>
+                          </ul>
+                          <div className="mt-2 text-xs text-gray-400">
+                            Es que se lo jure cuando tenia cinco completamente euforico al ver el pedazo de auto ese
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              <p>Pasa el mouse para ver estadísticas detalladas</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
+      {/* Panel de Estadísticas */}
+      <StatsPanel />
+      
       {/* Navegación Izquierda */}
       <div className="w-[8%] flex items-center justify-center">
         <Button
@@ -2777,54 +2987,6 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
           <ChevronRight className="h-6 w-6" />
           <span className="text-xs">Mañana</span>
         </Button>
-      </div>
-
-      {/* Botón de propina en la esquina superior izquierda */}
-      <div className="fixed top-2 left-2 z-50">
-        <button
-          onClick={() => setShowTipMenu((prev) => !prev)}
-          className="p-0 m-0 bg-transparent border-none shadow-none focus:outline-none text-base opacity-30 hover:opacity-100 transition-opacity duration-200"
-          title="¿Te gusta la app?"
-          style={{ lineHeight: 1 }}
-        >
-          <span role="img" aria-label="Café" className="text-base">☕️</span>
-        </button>
-        {showTipMenu && (
-          <div className="mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-sm animate-fade-in z-50">
-            <div className="mb-2 text-gray-800 font-semibold flex items-center gap-2">
-              <span role="img" aria-label="Gracias">🙏</span>
-              ¿Te gusta la app?
-            </div>
-            <div className="mb-2 text-gray-600">Puedes invitarme un cafecito o ayudarme a cumplir mi sueño:</div>
-            <ul className="space-y-2">
-              <li>
-                <a
-                  href="https://cafecito.app/ejemplo" // Cambia este link por el tuyo
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-blue-600 hover:underline"
-                >
-                  <span role="img" aria-label="Café">☕️</span>
-                  Invitar un cafecito
-                </a>
-              </li>
-              <li>
-                <a
-                  href="https://www.lamborghini.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-yellow-600 hover:underline"
-                >
-                  <span role="img" aria-label="Lamborghini">🏎️</span>
-                  Cumplir mi sueño: regalarle a mi mamá un Lamborghini Gallardo amarillo
-                </a>
-              </li>
-            </ul>
-            <div className="mt-3 text-xs text-gray-400">
-              Es que se lo jure cuando tenia cinco completamente euforico al ver el pedazo de auto ese
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

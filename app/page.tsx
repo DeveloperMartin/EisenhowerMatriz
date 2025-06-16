@@ -2,7 +2,7 @@
 
 import { DialogTrigger } from "@/components/ui/dialog"
 
-import { useState, useEffect, useCallback, memo } from "react"
+import { useState, useEffect, useCallback, memo, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,6 +43,11 @@ import {
   TrendingDown,
   Minus,
   BarChart3,
+  Timer,
+  Pause,
+  Play,
+  X,
+  Settings,
 } from "lucide-react"
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
@@ -1860,10 +1865,262 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
     )
   }
 
+  // Componente PomodoroPanel
+  function PomodoroPanel({ onConcentrationChange }: { onConcentrationChange?: (active: boolean) => void }) {
+    // Configuración inicial y persistencia
+    const defaultConfig = {
+      workMinutes: 25,
+      shortBreak: 5,
+      longBreak: 15,
+      sessionsBeforeLongBreak: 4,
+      omitBreaks: false,
+    }
+    const [config, setConfig] = useState(() => {
+      try {
+        const saved = localStorage.getItem("pomodoro-config")
+        return saved ? JSON.parse(saved) : defaultConfig
+      } catch {
+        return defaultConfig
+      }
+    })
+    const [isConfigOpen, setIsConfigOpen] = useState(false)
+    const [isOpen, setIsOpen] = useState(false)
+    const [isRunning, setIsRunning] = useState(false)
+    const [isPaused, setIsPaused] = useState(false)
+    const [currentSession, setCurrentSession] = useState(1)
+    const [mode, setMode] = useState<'work' | 'shortBreak' | 'longBreak'>("work")
+    const [timeLeft, setTimeLeft] = useState(config.workMinutes * 60)
+    const [intervalId, setIntervalId] = useState<NodeJS.Timeout | null>(null)
+
+    // Guardar configuración en localStorage
+    useEffect(() => {
+      localStorage.setItem("pomodoro-config", JSON.stringify(config))
+    }, [config])
+
+    // Actualizar timeLeft si cambia la configuración
+    useEffect(() => {
+      if (!isRunning) {
+        if (mode === "work") setTimeLeft(config.workMinutes * 60)
+        if (mode === "shortBreak") setTimeLeft(config.shortBreak * 60)
+        if (mode === "longBreak") setTimeLeft(config.longBreak * 60)
+      }
+      // eslint-disable-next-line
+    }, [config, mode])
+
+    // Mostrar tiempo en el título de la pestaña
+    useEffect(() => {
+      if (isOpen && isRunning) {
+        const min = Math.floor(timeLeft / 60).toString().padStart(2, "0")
+        const sec = (timeLeft % 60).toString().padStart(2, "0")
+        document.title = `${min}:${sec} - Pomodoro`
+      } else {
+        document.title = "Matriz Eisenhower"
+      }
+      return () => {
+        document.title = "Matriz Eisenhower"
+      }
+    }, [isOpen, isRunning, timeLeft])
+
+    // Temporizador
+    useEffect(() => {
+      if (isRunning && !isPaused) {
+        if (timeLeft > 0) {
+          const id = setTimeout(() => setTimeLeft((t) => t - 1), 1000)
+          setIntervalId(id as any)
+        } else {
+          // Cambiar de modo
+          if (mode === "work") {
+            if (config.omitBreaks) {
+              setCurrentSession((s) => s + 1)
+              setTimeLeft(config.workMinutes * 60)
+              setMode("work")
+            } else if (currentSession % config.sessionsBeforeLongBreak === 0) {
+              setTimeLeft(config.longBreak * 60)
+              setMode("longBreak")
+            } else {
+              setTimeLeft(config.shortBreak * 60)
+              setMode("shortBreak")
+            }
+          } else {
+            setCurrentSession((s) => (mode === "longBreak" ? 1 : s + 1))
+            setTimeLeft(config.workMinutes * 60)
+            setMode("work")
+          }
+        }
+      }
+      return () => {
+        if (intervalId) clearTimeout(intervalId)
+      }
+      // eslint-disable-next-line
+    }, [isRunning, isPaused, timeLeft, mode])
+
+    // Formatear tiempo
+    const formatTime = (sec: number) => {
+      const m = Math.floor(sec / 60).toString().padStart(2, "0")
+      const s = (sec % 60).toString().padStart(2, "0")
+      return `${m}:${s}`
+    }
+
+    // Handlers
+    const start = () => {
+      setIsRunning(true)
+      setIsPaused(false)
+    }
+    const pause = () => setIsPaused(true)
+    const resume = () => setIsPaused(false)
+    const reset = () => {
+      setIsRunning(false)
+      setIsPaused(false)
+      setCurrentSession(1)
+      setMode("work")
+      setTimeLeft(config.workMinutes * 60)
+    }
+    const handleConfigChange = (field: string, value: any) => {
+      setConfig((prev: any) => ({ ...prev, [field]: value }))
+    }
+
+    // Panel visual
+    return (
+      <>
+        {/* Overlay de concentración */}
+        {isOpen && isRunning && !isPaused && (
+          <>
+            {/* Spotlight cónico */}
+            <div
+              className="fixed inset-0 z-40 pointer-events-none"
+              style={{
+                background: 'radial-gradient(circle at 50% calc(100% - 5.5rem), rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.15) 30%, rgba(0,0,0,0.6) 70%, rgba(0,0,0,0.85) 100%)',
+                transition: 'background 0.4s',
+              }}
+            />
+            {/* Overlay oscuro extra */}
+            <div className="fixed inset-0 z-40 bg-black/60 transition-opacity duration-300" style={{ pointerEvents: 'auto' }} />
+          </>
+        )}
+        {/* Botón flotante */}
+        <div className="fixed bottom-16 left-1/2 z-50 -translate-x-1/2">
+          <Button
+            size="icon"
+            variant="outline"
+            className={`rounded-full shadow border-gray-300 bg-white hover:bg-gray-100 transition-all duration-300 ${
+              isOpen && isRunning && !isPaused
+                ? 'ring-4 ring-red-400/60 shadow-[0_0_40px_10px_rgba(255,80,80,0.7),0_8px_32px_0_rgba(0,0,0,0.25)] scale-110'
+                : ''
+            }`}
+            onClick={() => setIsOpen((o) => !o)}
+            title="Pomodoro"
+          >
+            <Timer className="h-5 w-5 text-red-500 drop-shadow-[0_0_8px_rgba(255,80,80,0.7)]" />
+          </Button>
+        </div>
+        {/* Panel Pomodoro */}
+        {isOpen && (
+          <div className="fixed bottom-32 left-1/2 z-50 -translate-x-1/2 bg-white border border-gray-200 rounded-xl shadow-2xl p-5 min-w-[320px] max-w-xs animate-fade-in">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Timer className="h-5 w-5 text-red-500" />
+                <span className="font-bold text-lg">Pomodoro</span>
+              </div>
+              <Button size="icon" variant="ghost" onClick={() => setIsOpen(false)} className="h-7 w-7 p-0">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex flex-col items-center gap-2 mb-3">
+              <span className={`text-3xl font-mono font-bold ${mode === "work" ? "text-red-600" : "text-green-600"}`}>{formatTime(timeLeft)}</span>
+              <span className="text-xs text-gray-500">{mode === "work" ? `Sesión ${currentSession}` : mode === "shortBreak" ? "Descanso corto" : "Descanso largo"}</span>
+            </div>
+            <div className="flex justify-center gap-2 mb-3">
+              {!isRunning ? (
+                <Button onClick={start} className="bg-red-600 hover:bg-red-700 text-white h-8 px-4 text-sm"><Play className="h-4 w-4 mr-1" />Iniciar</Button>
+              ) : isPaused ? (
+                <Button onClick={resume} className="bg-green-600 hover:bg-green-700 text-white h-8 px-4 text-sm"><Play className="h-4 w-4 mr-1" />Reanudar</Button>
+              ) : (
+                <Button onClick={pause} className="bg-yellow-500 hover:bg-yellow-600 text-white h-8 px-4 text-sm"><Pause className="h-4 w-4 mr-1" />Pausar</Button>
+              )}
+              <Button onClick={reset} variant="outline" className="h-8 px-4 text-sm">Reiniciar</Button>
+              <Button onClick={() => setIsConfigOpen((v) => !v)} variant="ghost" className="h-8 px-2"><Settings className="h-4 w-4" /></Button>
+            </div>
+            {isConfigOpen && (
+              <div className="space-y-2 border-t pt-2 mt-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span>Duración trabajo</span>
+                  <Input
+                    type="number"
+                    min={5}
+                    max={120}
+                    value={config.workMinutes}
+                    onChange={e => handleConfigChange("workMinutes", Math.max(5, Math.min(120, Number(e.target.value))))}
+                    className="w-16 h-7 text-xs"
+                  />
+                  <span>min</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span>Descanso corto</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={config.shortBreak}
+                    onChange={e => handleConfigChange("shortBreak", Math.max(1, Math.min(30, Number(e.target.value))))}
+                    className="w-16 h-7 text-xs"
+                  />
+                  <span>min</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span>Descanso largo</span>
+                  <Input
+                    type="number"
+                    min={5}
+                    max={60}
+                    value={config.longBreak}
+                    onChange={e => handleConfigChange("longBreak", Math.max(5, Math.min(60, Number(e.target.value))))}
+                    className="w-16 h-7 text-xs"
+                  />
+                  <span>min</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span>Sesiones antes de largo</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={config.sessionsBeforeLongBreak}
+                    onChange={e => handleConfigChange("sessionsBeforeLongBreak", Math.max(1, Math.min(10, Number(e.target.value))))}
+                    className="w-16 h-7 text-xs"
+                  />
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={config.omitBreaks}
+                    onChange={e => handleConfigChange("omitBreaks", e.target.checked)}
+                    id="omit-breaks"
+                    className="accent-red-600"
+                  />
+                  <label htmlFor="omit-breaks">Omitir descansos</label>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </>
+    )
+
+    useEffect(() => {
+      if (onConcentrationChange) {
+        onConcentrationChange(isOpen && isRunning && !isPaused)
+      }
+    }, [isOpen, isRunning, isPaused, onConcentrationChange])
+  }
+
+  const [isPomodoroConcentration, setIsPomodoroConcentration] = useState(false)
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Panel de Estadísticas */}
-      <StatsPanel />
+      <div className={isPomodoroConcentration ? "opacity-40 grayscale pointer-events-none transition-all duration-300" : "transition-all duration-300"}>
+        <StatsPanel />
+      </div>
       
       {/* Navegación Izquierda */}
       <div className="w-[8%] flex items-center justify-center">
@@ -2973,6 +3230,8 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
 
         {/* App Launcher */}
         <AppLauncher />
+        {/* Pomodoro Panel */}
+        <PomodoroPanel onConcentrationChange={setIsPomodoroConcentration} />
       </div>
 
       {/* Navegación Derecha */}

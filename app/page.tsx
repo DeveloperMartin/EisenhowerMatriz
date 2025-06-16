@@ -2,7 +2,7 @@
 
 import { DialogTrigger } from "@/components/ui/dialog"
 
-import { useState, useEffect, useCallback, memo, useMemo } from "react"
+import { useState, useEffect, useCallback, memo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -1866,7 +1866,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
   }
 
   // Componente PomodoroPanel
-  function PomodoroPanel({ onConcentrationChange }: { onConcentrationChange?: (active: boolean) => void }) {
+  function PomodoroPanel() {
     // Configuración inicial y persistencia
     const defaultConfig = {
       workMinutes: 25,
@@ -2105,22 +2105,12 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
         )}
       </>
     )
-
-    useEffect(() => {
-      if (onConcentrationChange) {
-        onConcentrationChange(isOpen && isRunning && !isPaused)
-      }
-    }, [isOpen, isRunning, isPaused, onConcentrationChange])
   }
-
-  const [isPomodoroConcentration, setIsPomodoroConcentration] = useState(false)
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Panel de Estadísticas */}
-      <div className={isPomodoroConcentration ? "opacity-40 grayscale pointer-events-none transition-all duration-300" : "transition-all duration-300"}>
-        <StatsPanel />
-      </div>
+      <StatsPanel />
       
       {/* Navegación Izquierda */}
       <div className="w-[8%] flex items-center justify-center">
@@ -3231,7 +3221,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
         {/* App Launcher */}
         <AppLauncher />
         {/* Pomodoro Panel */}
-        <PomodoroPanel onConcentrationChange={setIsPomodoroConcentration} />
+        <PomodoroPanel />
       </div>
 
       {/* Navegación Derecha */}

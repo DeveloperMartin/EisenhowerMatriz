@@ -2003,7 +2003,7 @@ function EisenhowerMatrixApp({ user, onSignOut }: { user: any; onSignOut: () => 
             size="icon"
             variant="outline"
             className={`rounded-full shadow border-gray-300 bg-white hover:bg-gray-100 transition-all duration-300 ${
-              isOpen && isRunning && !isPaused
+              isRunning && !isPaused
                 ? 'ring-4 ring-red-400/60 shadow-[0_0_40px_10px_rgba(255,80,80,0.7),0_8px_32px_0_rgba(0,0,0,0.25)] scale-110'
                 : ''
             }`}
